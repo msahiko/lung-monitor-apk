@@ -974,7 +974,7 @@ let   ringWrite = 0, ringRead = 0;
  * b64   = Base64 little-endian Float32 (interleaved L,R,L,R,…)
  * count = number of float samples
  */
-window.onNativeAudio = function(b64, count) {
+window.onNativeAudio = function(b64, count, total) {
   try {
     const bin   = atob(b64);
     const bytes = new Uint8Array(bin.length);
@@ -985,6 +985,9 @@ window.onNativeAudio = function(b64, count) {
       ringBuf[ringWrite & mask] = f32[i];
       ringWrite++;
     }
+    /* デバッグ表示更新 */
+    var t = document.getElementById('dbg-txt');
+    if (t) t.textContent = 'USB: Zoom H1 XLR ✅ | Samples: ' + total;
   } catch(e) { console.warn('[onNativeAudio]', e); }
 };
 
