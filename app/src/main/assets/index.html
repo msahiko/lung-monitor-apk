@@ -1022,11 +1022,19 @@ async function startMonitoring() {
     APP.analyser1 = APP.audioCtx.createAnalyser();
     APP.analyser2 = APP.audioCtx.createAnalyser();
     applyAnalyserSettings();
-    /* ScriptProcessorNode reads ring buffer → feeds AnalyserNodes */
-    const proc     = APP.audioCtx.createScriptProcessor(4096, 0, 2);
+    /* ScriptProcessorNode reads ring buffer → feeds AnalyserNodes
+       入力1chにサイレントOscillatorを接続してonaudioprocessを確実に発火させる */
+    const proc     = APP.audioCtx.createScriptProcessor(4096, 1, 2);
     const splitter = APP.audioCtx.createChannelSplitter(2);
     const silent   = APP.audioCtx.createGain();
     silent.gain.value = 0;
+    /* サイレント発振器でonaudioprocessを駆動 */
+    const silentOsc  = APP.audioCtx.createOscillator();
+    const silentGain = APP.audioCtx.createGain();
+    silentGain.gain.value = 0;
+    silentOsc.connect(silentGain);
+    silentGain.connect(proc);
+    silentOsc.start();
     const mask = RING_SIZE - 1;
     proc.onaudioprocess = function(e) {
       const L = e.outputBuffer.getChannelData(0);
