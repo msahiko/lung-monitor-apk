@@ -965,29 +965,126 @@ function getLabel(ch) {
 });
 
 /* ── Native Android AudioRecord Bridge ───────────────────────── */
-const RING_SIZE = 1 << 17;          /* 131072 — must be power of 2 */
+const RING_SIZE = 1 << 17;
 const ringBuf   = new Float32Array(RING_SIZE);
 let   ringWrite = 0, ringRead = 0;
 
+/* ── JS FFT（Cooley-Tukey radix-2）────────────────────────────── */
+function _fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wR = Math.cos(ang), wI = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cR = 1, cI = 0;
+      for (let j = 0; j < len >> 1; j++) {
+        const tR = cR * re[i+j+len/2] - cI * im[i+j+len/2];
+        const tI = cR * im[i+j+len/2] + cI * re[i+j+len/2];
+        re[i+j+len/2] = re[i+j] - tR; im[i+j+len/2] = im[i+j] - tI;
+        re[i+j] += tR; im[i+j] += tI;
+        const tmp = cR*wR - cI*wI; cI = cR*wI + cI*wR; cR = tmp;
+      }
+    }
+  }
+}
+
+function pcmToDbSpectrum(samples, fftSize) {
+  const re = new Float32Array(fftSize);
+  const im = new Float32Array(fftSize);
+  const n  = Math.min(samples.length, fftSize);
+  for (let i = 0; i < n; i++) {
+    const w = 0.5 * (1 - Math.cos(2 * Math.PI * i / (fftSize - 1)));
+    re[i] = samples[i] * w;
+  }
+  _fft(re, im);
+  const out = new Float32Array(fftSize >> 1).fill(-120);
+  for (let i = 0; i < fftSize >> 1; i++) {
+    const p = (re[i]*re[i] + im[i]*im[i]) / (fftSize * fftSize);
+    out[i] = p > 1e-40 ? 10 * Math.log10(p) : -120;
+  }
+  return out;
+}
+
+/* ── Native buffer state ──────────────────────────────────────── */
+const NATIVE = {
+  active: false,
+  tBuf1: null, tBuf2: null,
+  fBuf1: null, fBuf2: null,
+  pcmL:  null, pcmR:  null,
+  head:  0
+};
+
+function setupNativeAnalysers() {
+  const fftSize = APP.settings.fftSize;
+  const bins    = fftSize >> 1;
+  NATIVE.tBuf1  = new Float32Array(fftSize);
+  NATIVE.tBuf2  = new Float32Array(fftSize);
+  NATIVE.fBuf1  = new Float32Array(bins).fill(-120);
+  NATIVE.fBuf2  = new Float32Array(bins).fill(-120);
+  NATIVE.pcmL   = new Float32Array(fftSize * 2);
+  NATIVE.pcmR   = new Float32Array(fftSize * 2);
+  NATIVE.head   = 0;
+  NATIVE.active = true;
+
+  /* AnalyserNodeのメソッドをモンキーパッチ → 直接データを注入 */
+  APP.analyser1.getFloatFrequencyData  = b => b.set(NATIVE.fBuf1.subarray(0, b.length));
+  APP.analyser1.getFloatTimeDomainData = b => b.set(NATIVE.tBuf1.subarray(0, b.length));
+  APP.analyser2.getFloatFrequencyData  = b => b.set(NATIVE.fBuf2.subarray(0, b.length));
+  APP.analyser2.getFloatTimeDomainData = b => b.set(NATIVE.tBuf2.subarray(0, b.length));
+}
+
 /**
- * Called by Kotlin MainActivity via evaluateJavascript()
- * b64   = Base64 little-endian Float32 (interleaved L,R,L,R,…)
- * count = number of float samples
+ * Kotlin から evaluateJavascript で呼ばれる
+ * b64 = Base64 Float32（L,R,L,R インターリーブ）
+ * count = サンプル数（ステレオ合計）
+ * total = 累計サンプル数（デバッグ用）
  */
 window.onNativeAudio = function(b64, count, total) {
   try {
     const bin   = atob(b64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const f32  = new Float32Array(bytes.buffer, 0, count);
-    const mask = RING_SIZE - 1;
-    for (let i = 0; i < count; i++) {
-      ringBuf[ringWrite & mask] = f32[i];
-      ringWrite++;
+    const f32   = new Float32Array(bytes.buffer, 0, count);
+
+    if (NATIVE.active) {
+      const frames = count >> 1;
+      const fftSize = APP.settings.fftSize;
+      const mask    = (fftSize * 2) - 1;
+
+      /* PCMリングバッファに書き込み */
+      for (let i = 0; i < frames; i++) {
+        NATIVE.pcmL[NATIVE.head % (fftSize * 2)] = f32[i * 2];
+        NATIVE.pcmR[NATIVE.head % (fftSize * 2)] = f32[i * 2 + 1];
+        NATIVE.head++;
+      }
+
+      /* 最新 fftSize フレームを time domain バッファにコピー */
+      const start = NATIVE.head - fftSize;
+      for (let i = 0; i < fftSize; i++) {
+        NATIVE.tBuf1[i] = NATIVE.pcmL[(start + i) % (fftSize * 2)] || 0;
+        NATIVE.tBuf2[i] = NATIVE.pcmR[(start + i) % (fftSize * 2)] || 0;
+      }
+
+      /* FFT → 周波数スペクトル更新 */
+      const f1 = pcmToDbSpectrum(NATIVE.tBuf1, fftSize);
+      const f2 = pcmToDbSpectrum(NATIVE.tBuf2, fftSize);
+      NATIVE.fBuf1.set(f1);
+      NATIVE.fBuf2.set(f2);
     }
-    /* デバッグ表示更新 */
-    var t = document.getElementById('dbg-txt');
-    if (t) t.textContent = 'USB: Zoom H1 XLR ✅ | Samples: ' + total;
+
+    /* デバッグ表示 */
+    const t = document.getElementById('dbg-txt');
+    if (t) t.textContent = 'USB: H1 XLR ✅ | Samples: ' + total;
+
   } catch(e) { console.warn('[onNativeAudio]', e); }
 };
 
@@ -1015,48 +1112,20 @@ async function startMonitoring() {
   if (typeof Android !== 'undefined') {
     APP.labels.ch1 = getLabel(1);
     APP.labels.ch2 = getLabel(2);
-    ringWrite = 0; ringRead = 0;
     try { APP.audioCtx = new AudioContext({ sampleRate: 48000 }); }
     catch(_) { APP.audioCtx = new AudioContext(); }
     if (APP.audioCtx.state === 'suspended') await APP.audioCtx.resume();
+    /* AnalyserNodeを生成（設定値取得のため）→ メソッドはモンキーパッチで上書き */
     APP.analyser1 = APP.audioCtx.createAnalyser();
     APP.analyser2 = APP.audioCtx.createAnalyser();
     applyAnalyserSettings();
-    /* ScriptProcessorNode reads ring buffer → feeds AnalyserNodes
-       入力1chにサイレントOscillatorを接続してonaudioprocessを確実に発火させる */
-    const proc     = APP.audioCtx.createScriptProcessor(4096, 1, 2);
-    const splitter = APP.audioCtx.createChannelSplitter(2);
-    const silent   = APP.audioCtx.createGain();
-    silent.gain.value = 0;
-    /* サイレント発振器でonaudioprocessを駆動 */
-    const silentOsc  = APP.audioCtx.createOscillator();
-    const silentGain = APP.audioCtx.createGain();
-    silentGain.gain.value = 0;
-    silentOsc.connect(silentGain);
-    silentGain.connect(proc);
-    silentOsc.start();
-    const mask = RING_SIZE - 1;
-    proc.onaudioprocess = function(e) {
-      const L = e.outputBuffer.getChannelData(0);
-      const R = e.outputBuffer.getChannelData(1);
-      if (ringWrite - ringRead >= L.length * 2) {
-        for (let i = 0; i < L.length; i++) {
-          L[i] = ringBuf[(ringRead++) & mask];
-          R[i] = ringBuf[(ringRead++) & mask];
-        }
-      } else { L.fill(0); R.fill(0); }
-    };
-    proc.connect(splitter);
-    splitter.connect(APP.analyser1, 0);
-    splitter.connect(APP.analyser2, 1);
-    proc.connect(silent);
-    silent.connect(APP.audioCtx.destination);
-    APP.nativeProc = proc;
-    APP.isMono     = false;
-    APP.clipCount  = [0, 0];
+    setupNativeAnalysers();   /* PCM直接処理モードを有効化 */
+    APP.nativeProc  = null;
+    APP.isMono      = false;
+    APP.clipCount   = [0, 0];
     APP.sampleCount = 0;
-    APP.stream     = null;
-    APP.fileMode   = false;
+    APP.stream      = null;
+    APP.fileMode    = false;
     Android.startRecording();
     enterMonitorScreen();
     startTimer();
