@@ -25,14 +25,13 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val SAMPLE_RATE  = 48000
-        private const val CHUNK_FRAMES = 4096
+        private const val CHUNK_FRAMES = 2048
         private const val PERM_CODE    = 1
         private const val TAG          = "LungMonitor"
     }
 
     inner class AudioBridge {
 
-        /** 内蔵マイク以外の入力デバイスを検出（USB・有線問わず） */
         @JavascriptInterface
         fun getUsbDeviceName(): String {
             val am = getSystemService(AUDIO_SERVICE) as AudioManager
@@ -47,10 +46,20 @@ class MainActivity : AppCompatActivity() {
             return ext?.productName?.toString() ?: "none"
         }
 
-        /** AudioRecordを開始（setPreferredDeviceなし→Androidが自動ルーティング） */
         @JavascriptInterface
         fun startRecording() {
             if (isRecording) return
+
+            val am = getSystemService(AUDIO_SERVICE) as AudioManager
+            val builtIn = setOf(
+                AudioDeviceInfo.TYPE_BUILTIN_MIC,
+                AudioDeviceInfo.TYPE_BUILTIN_EARPIECE,
+                AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+            )
+            val extDev = am.getDevices(AudioManager.GET_DEVICES_INPUTS)
+                .firstOrNull { it.type !in builtIn }
+
+            Log.d(TAG, "External device: ${extDev?.productName} type=${extDev?.type}")
 
             val minBuf = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE,
@@ -71,28 +80,38 @@ class MainActivity : AppCompatActivity() {
                 .setBufferSizeInBytes(bufBytes)
                 .build()
 
-            Log.d(TAG, "AudioRecord state=${rec.state}, routedDevice=${rec.routedDevice?.productName}")
+            // H1 XLRを明示的に指定
+            extDev?.let {
+                rec.preferredDevice = it
+                Log.d(TAG, "setPreferredDevice: ${it.productName}")
+            }
 
             rec.startRecording()
             audioRecord = rec
             isRecording = true
 
+            Log.d(TAG, "Recording started, state=${rec.state}, routedDevice=${rec.routedDevice?.productName}")
+
             Thread {
-                val pcm    = FloatArray(CHUNK_FRAMES * 2)
-                val bbuf   = ByteBuffer.allocate(pcm.size * 4).apply {
+                val pcm  = FloatArray(CHUNK_FRAMES * 2)
+                val bbuf = ByteBuffer.allocate(pcm.size * 4).apply {
                     order(ByteOrder.LITTLE_ENDIAN)
                 }
+                var totalSamples = 0L
+
                 while (isRecording) {
                     val read = rec.read(pcm, 0, pcm.size, AudioRecord.READ_BLOCKING)
                     if (read > 0) {
+                        totalSamples += read
                         bbuf.clear()
                         for (i in 0 until read) bbuf.putFloat(pcm[i])
                         val b64 = Base64.encodeToString(
                             bbuf.array(), 0, read * 4, Base64.NO_WRAP
                         )
+                        val samples = totalSamples
                         runOnUiThread {
                             webView.evaluateJavascript(
-                                "window.onNativeAudio('$b64',$read)", null
+                                "window.onNativeAudio('$b64',$read,$samples)", null
                             )
                         }
                     }
@@ -111,9 +130,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         WebView.setWebContentsDebuggingEnabled(true)
-
         webView = WebView(this).apply {
             settings.apply {
                 javaScriptEnabled               = true
@@ -128,25 +145,20 @@ class MainActivity : AppCompatActivity() {
             loadUrl("file:///android_asset/index.html")
         }
         setContentView(webView)
-
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
+            != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), PERM_CODE)
         }
     }
 
     override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERM_CODE) {
             val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
             webView.evaluateJavascript(
-                "window.onPermissionResult && window.onPermissionResult($granted)", null
-            )
+                "window.onPermissionResult && window.onPermissionResult($granted)", null)
         }
     }
 
