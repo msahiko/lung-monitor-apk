@@ -1,0 +1,1007 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>NICU Lung Sound Monitor</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --base:     #1e1e2e; --mantle:   #181825; --crust:    #11111b;
+      --surface0: #313244; --surface1: #45475a; --surface2: #585b70;
+      --overlay0: #6c7086; --overlay1: #7f849c;
+      --text:     #cdd6f4; --subtext0: #a6adc8; --subtext1: #bac2de;
+      --blue:     #89b4fa; --green:    #a6e3a1; --yellow:   #f9e2af;
+      --red:      #f38ba8; --mauve:    #cba6f7; --teal:     #94e2d5;
+      --peach:    #fab387; --sapphire: #74c7ec;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--base); color: var(--text);
+           font-family: 'IBM Plex Sans', sans-serif; height: 100vh; overflow: hidden; }
+    .screen { display: none; width: 100%; height: 100vh; }
+    .screen.active { display: flex; flex-direction: column; }
+
+    /* ── SETUP SCREEN ── */
+    #screen-setup {
+      align-items: center; justify-content: center; background: var(--base);
+      background-image:
+        radial-gradient(ellipse at 20% 50%, rgba(137,180,250,0.06) 0%, transparent 60%),
+        radial-gradient(ellipse at 80% 20%, rgba(203,166,247,0.05) 0%, transparent 50%);
+    }
+    .setup-card {
+      background: var(--mantle); border: 1px solid var(--surface0);
+      border-radius: 16px; padding: 40px 48px; width: 540px; max-width: 95vw;
+    }
+    .setup-logo { display: flex; align-items: center; gap: 14px; margin-bottom: 36px; }
+    .setup-logo-icon {
+      width: 44px; height: 44px;
+      background: linear-gradient(135deg, var(--blue), var(--mauve));
+      border-radius: 12px; display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+    }
+    .setup-logo h1 { font-size: 20px; font-weight: 600; color: var(--text); }
+    .setup-logo p  { font-size: 12px; color: var(--subtext0); margin-top: 2px; }
+    .setup-section { margin-bottom: 20px; }
+    .setup-label { font-size: 11px; font-weight: 600; color: var(--overlay1);
+                   text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+
+    /* USB status chip */
+    .usb-status {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--surface0); border-radius: 8px;
+      padding: 12px 14px; border: 1px solid var(--surface1);
+    }
+    .usb-dot { font-size: 10px; }
+    .usb-name { font-size: 13px; font-family: 'JetBrains Mono', monospace;
+                color: var(--text); flex: 1; }
+    .usb-refresh {
+      background: transparent; border: 1px solid var(--surface2);
+      color: var(--subtext0); border-radius: 6px; cursor: pointer;
+      padding: 4px 8px; font-size: 14px; transition: all 0.15s;
+    }
+    .usb-refresh:hover { background: var(--surface1); color: var(--text); }
+
+    /* Channel label rows */
+    .ch-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+    .ch-row label { font-size: 12px; color: var(--subtext0); min-width: 44px; }
+    .ch-row select, .ch-row input {
+      flex: 1; background: var(--surface0); border: 1px solid var(--surface1);
+      color: var(--text); border-radius: 8px; padding: 8px 10px;
+      font-size: 13px; outline: none;
+    }
+    .ch-row input.visible { display: block; }
+    .ch-row input { display: none; }
+
+    .start-btn {
+      width: 100%; margin-top: 20px; padding: 14px;
+      background: linear-gradient(135deg, var(--blue), var(--mauve));
+      border: none; border-radius: 10px; color: var(--crust);
+      font-size: 15px; font-weight: 600; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .start-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+    .start-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .start-btn.loading .btn-text::before { content: ''; }
+    .btn-spinner {
+      width: 14px; height: 14px; border: 2px solid rgba(17,17,27,0.3);
+      border-top-color: var(--crust); border-radius: 50%;
+      display: none; animation: spin 0.7s linear infinite;
+    }
+    .start-btn.loading .btn-spinner { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .file-btn {
+      width: 100%; margin-top: 10px; padding: 11px;
+      background: var(--surface0); border: 1px solid var(--surface1);
+      border-radius: 10px; color: var(--subtext1); font-size: 13px;
+      cursor: pointer; transition: background 0.15s, color 0.15s;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .file-btn:hover { background: var(--surface1); color: var(--text); }
+    .demo-badge {
+      font-size: 10px; font-family: 'JetBrains Mono', monospace;
+      background: rgba(166,227,161,0.15); color: var(--green);
+      border-radius: 4px; padding: 2px 6px;
+    }
+    .error-msg {
+      margin-top: 12px; padding: 10px 14px; background: rgba(243,139,168,0.12);
+      border: 1px solid rgba(243,139,168,0.3); border-radius: 8px;
+      color: var(--red); font-size: 12px; display: none;
+    }
+    .error-msg.visible { display: block; }
+
+    /* ── MONITOR SCREEN ── */
+    .monitor-header {
+      background: var(--mantle); border-bottom: 1px solid var(--surface0);
+      padding: 0 14px; height: 44px; display: flex; align-items: center; gap: 10px;
+      flex-shrink: 0;
+    }
+    .stop-btn {
+      background: rgba(243,139,168,0.15); border: 1px solid rgba(243,139,168,0.3);
+      color: var(--red); border-radius: 7px; padding: 5px 12px;
+      font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+    }
+    .stop-btn:hover { background: rgba(243,139,168,0.25); }
+    .hdr-div { width: 1px; height: 20px; background: var(--surface1); }
+    .hdr-chip { display: flex; align-items: center; gap: 6px;
+                font-size: 12px; font-family: 'JetBrains Mono', monospace;
+                background: var(--surface0); padding: 4px 10px; border-radius: 20px; }
+    .hdr-chip .dot { width: 7px; height: 7px; border-radius: 50%; }
+    .hdr-spacer { flex: 1; }
+    .hdr-timer { font-family: 'JetBrains Mono', monospace; font-size: 14px;
+                 font-weight: 600; color: var(--subtext1); }
+    .qc-badge { font-size: 11px; font-weight: 700; font-family: 'JetBrains Mono', monospace;
+                padding: 3px 10px; border-radius: 20px; }
+    .qc-ok   { background: rgba(166,227,161,0.15); color: var(--green); }
+    .qc-warn { background: rgba(249,226,175,0.15); color: var(--yellow); }
+    .qc-err  { background: rgba(243,139,168,0.15); color: var(--red); }
+    .adv-btn {
+      background: var(--surface0); border: 1px solid var(--surface1);
+      color: var(--subtext0); border-radius: 7px; padding: 5px 10px;
+      font-size: 14px; cursor: pointer; position: relative; transition: all 0.15s;
+    }
+    .adv-btn:hover { background: var(--surface1); color: var(--text); }
+    .adv-panel {
+      display: none; position: absolute; top: 50px; right: 10px; z-index: 100;
+      background: var(--mantle); border: 1px solid var(--surface1);
+      border-radius: 12px; padding: 16px; width: 240px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+    .adv-panel.open { display: block; }
+    .adv-panel h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--subtext1); }
+    .adv-row { display: flex; justify-content: space-between; align-items: center;
+               margin-bottom: 8px; font-size: 12px; color: var(--subtext0); }
+    .adv-row select {
+      background: var(--surface0); border: 1px solid var(--surface1); color: var(--text);
+      border-radius: 6px; padding: 4px 6px; font-size: 11px;
+    }
+    .file-playbar {
+      display: none; align-items: center; gap: 10px;
+      background: var(--crust); padding: 6px 14px; border-bottom: 1px solid var(--surface0);
+      font-size: 12px; font-family: 'JetBrains Mono', monospace; flex-shrink: 0;
+    }
+    .file-playbar.visible { display: flex; }
+    .file-fname { color: var(--subtext0); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-pause-btn {
+      background: var(--surface0); border: 1px solid var(--surface1); color: var(--text);
+      border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .file-pause-btn:hover { background: var(--surface1); }
+    .file-prog-wrap { flex: 1; height: 4px; background: var(--surface0); border-radius: 2px; }
+    .file-prog-fill { height: 100%; background: var(--blue); border-radius: 2px; transition: width 0.5s; }
+    .file-time { color: var(--subtext0); }
+    .monitor-body { flex: 1; display: flex; overflow: hidden; }
+    .metrics-panel {
+      width: 72px; background: var(--mantle); border-right: 1px solid var(--surface0);
+      display: flex; flex-direction: column; padding: 8px 4px; gap: 10px;
+      overflow: hidden; flex-shrink: 0;
+    }
+    .metrics-ch { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; }
+    .metrics-ch-label { font-size: 9px; font-weight: 700; font-family: 'JetBrains Mono', monospace;
+                        letter-spacing: 0.08em; }
+    .label-ch1 { color: var(--blue); }
+    .label-ch2 { color: var(--teal); }
+    .vu-wrap { width: 10px; height: 60px; background: var(--surface0); border-radius: 3px;
+               position: relative; overflow: hidden; }
+    .vu-fill { position: absolute; bottom: 0; width: 100%; border-radius: 3px;
+               transition: height 0.08s; }
+    .metric-cell { text-align: center; }
+    .metric-name { font-size: 8px; color: var(--overlay0); font-family: 'JetBrains Mono', monospace; }
+    .metric-val  { font-size: 12px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+    .metric-unit { font-size: 8px; color: var(--overlay0); }
+    .spec-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .cb-container {
+      background: var(--mantle); border-bottom: 1px solid var(--surface0);
+      padding: 6px 10px; flex-shrink: 0;
+    }
+    .cb-handle {
+      width: 100%; height: 6px; background: var(--surface0); border-radius: 3px;
+      cursor: ns-resize; position: relative; margin-bottom: 4px;
+    }
+    .cb-handle::after {
+      content: ''; position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      width: 30px; height: 2px; background: var(--surface2); border-radius: 1px;
+    }
+    .cb-body { display: flex; gap: 5px; align-items: stretch; }
+    #cb-canvas { border-radius: 3px; display: block; }
+    .cb-labels { display: flex; flex-direction: column; justify-content: space-between;
+                 font-size: 8px; font-family: 'JetBrains Mono', monospace;
+                 color: var(--subtext0); line-height: 1; }
+    .spec-panel {
+      flex: 1; position: relative; overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .spec-panel + .spec-panel { border-top: 1px solid var(--surface0); }
+    .spec-canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; }
+    .spec-overlay-label {
+      position: absolute; top: 8px; left: 10px;
+      font-size: 11px; font-family: 'JetBrains Mono', monospace;
+      font-weight: 600; display: flex; align-items: center; gap: 6px;
+      background: rgba(17,17,27,0.72); backdrop-filter: blur(4px);
+      padding: 3px 9px; border-radius: 4px; pointer-events: none; z-index: 10;
+    }
+    .spec-overlay-label .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .spec-placeholder { color: var(--overlay0); font-size: 12px;
+                        font-family: 'JetBrains Mono', monospace;
+                        text-align: center; z-index: 5; pointer-events: none; line-height: 1.8; }
+    .spec-placeholder span { display: block; font-size: 22px; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+
+<!-- ════════════════════ SETUP SCREEN ════════════════════ -->
+<div id="screen-setup" class="screen active">
+  <div class="setup-card">
+
+    <div class="setup-logo">
+      <div class="setup-logo-icon">🫁</div>
+      <div>
+        <h1>Lung Sound Monitor</h1>
+        <p>NICU · CPAP · Real-time QC</p>
+      </div>
+    </div>
+
+    <!-- USB Device Status -->
+    <div class="setup-section">
+      <div class="setup-label">USB Audio Device</div>
+      <div class="usb-status">
+        <span class="usb-dot" id="usb-dot" style="color:var(--overlay0)">⬤</span>
+        <span class="usb-name" id="usb-name">Checking…</span>
+        <button class="usb-refresh" id="usb-refresh" title="Refresh">⟳</button>
+      </div>
+    </div>
+
+    <!-- Channel Labels -->
+    <div class="setup-section">
+      <div class="setup-label">Channel Labels</div>
+      <div class="ch-row">
+        <label>Ch 1</label>
+        <select id="ch1-select">
+          <option value="Lung L">Lung L</option>
+          <option value="Lung R">Lung R</option>
+          <option value="Larynx">Larynx</option>
+          <option value="Ch 1">Ch 1</option>
+          <option value="custom">Custom…</option>
+        </select>
+        <input type="text" id="ch1-custom" placeholder="L. Label" maxlength="20">
+      </div>
+      <div class="ch-row">
+        <label>Ch 2</label>
+        <select id="ch2-select">
+          <option value="Larynx">Larynx</option>
+          <option value="Lung L">Lung L</option>
+          <option value="Lung R">Lung R</option>
+          <option value="Ch 2">Ch 2</option>
+          <option value="custom">Custom…</option>
+        </select>
+        <input type="text" id="ch2-custom" placeholder="R. Label" maxlength="20">
+      </div>
+    </div>
+
+    <button class="start-btn" id="start-btn" disabled>
+      <span class="btn-spinner"></span>
+      <span class="btn-text">▶&nbsp; Start Monitoring</span>
+    </button>
+    <button class="file-btn" id="file-btn">
+      📁&nbsp; Open Audio File
+      <span class="demo-badge">WAV · MP3 · M4A</span>
+    </button>
+    <input type="file" id="file-input" accept="audio/*" style="display:none">
+    <div class="error-msg" id="error-msg"></div>
+
+  </div>
+</div>
+
+<!-- ════════════════════ MONITOR SCREEN ════════════════════ -->
+<div id="screen-monitor" class="screen">
+
+  <div class="monitor-header">
+    <button class="stop-btn" id="stop-btn">■ Stop</button>
+    <div class="hdr-div"></div>
+    <div class="hdr-chip">
+      <span class="dot" style="background:var(--blue)"></span>
+      <span id="hdr-ch1-name">Ch 1</span>
+    </div>
+    <div class="hdr-chip">
+      <span class="dot" style="background:var(--teal)"></span>
+      <span id="hdr-ch2-name">Ch 2</span>
+    </div>
+    <div class="hdr-spacer"></div>
+    <span class="hdr-timer" id="hdr-timer">00:00</span>
+    <div class="qc-badge qc-ok" id="qc-badge">● OK</div>
+    <button class="adv-btn" id="adv-btn" title="Advanced Settings">⚙</button>
+    <div class="adv-panel" id="adv-panel">
+      <h3>Advanced Settings</h3>
+      <div class="adv-row">
+        <label>FFT Size</label>
+        <select id="adv-fft">
+          <option value="4096">4096</option>
+          <option value="8192" selected>8192 ★</option>
+          <option value="16384">16384</option>
+        </select>
+      </div>
+      <div class="adv-row">
+        <label>Window</label>
+        <select id="adv-window">
+          <option value="hann" selected>Hann ★</option>
+          <option value="hamming">Hamming</option>
+          <option value="blackman">Blackman</option>
+        </select>
+      </div>
+      <div class="adv-row">
+        <label>Display Max</label>
+        <select id="adv-maxfreq">
+          <option value="1000">1000 Hz</option>
+          <option value="2000" selected>2000 Hz ★</option>
+          <option value="4000">4000 Hz</option>
+        </select>
+      </div>
+      <div class="adv-row">
+        <label>Freq Scale</label>
+        <select id="adv-scale">
+          <option value="linear">Linear</option>
+          <option value="log" selected>Log ★</option>
+        </select>
+      </div>
+      <div class="adv-row">
+        <label>Time Range</label>
+        <select id="adv-time">
+          <option value="10">10 s</option>
+          <option value="30" selected>30 s ★</option>
+          <option value="60">60 s</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="file-playbar" id="file-playbar">
+    <span class="file-fname" id="file-fname">—</span>
+    <button class="file-pause-btn" id="file-pause-btn">⏸ Pause</button>
+    <div class="file-prog-wrap">
+      <div class="file-prog-fill" id="file-prog-fill" style="width:0%"></div>
+    </div>
+    <span class="file-time" id="file-time">0:00 / 0:00</span>
+  </div>
+
+  <div class="monitor-body">
+    <div class="metrics-panel">
+      <div class="metrics-ch">
+        <div class="metrics-ch-label label-ch1" id="sidebar-ch1-label">CH1</div>
+        <div class="vu-wrap">
+          <div class="vu-fill" id="vu1" style="height:0%;background:var(--blue)"></div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-name">RMS</div>
+          <div class="metric-val" id="val-rms1" style="color:var(--blue);font-size:13px">—</div>
+          <div class="metric-unit">dBFS</div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-name">Clip</div>
+          <div class="metric-val" id="val-clip1" style="color:var(--green);font-size:12px">—</div>
+          <div class="metric-unit">%</div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-name">S.Cent</div>
+          <div class="metric-val" id="val-sc1" style="color:var(--peach);font-size:12px">—</div>
+          <div class="metric-unit">Hz</div>
+        </div>
+      </div>
+      <div class="metrics-ch">
+        <div class="metrics-ch-label label-ch2" id="sidebar-ch2-label">CH2</div>
+        <div class="vu-wrap">
+          <div class="vu-fill" id="vu2" style="height:0%;background:var(--teal)"></div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-name">RMS</div>
+          <div class="metric-val" id="val-rms2" style="color:var(--teal);font-size:13px">—</div>
+          <div class="metric-unit">dBFS</div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-name">Clip</div>
+          <div class="metric-val" id="val-clip2" style="color:var(--green);font-size:12px">—</div>
+          <div class="metric-unit">%</div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-name">S.Cent</div>
+          <div class="metric-val" id="val-sc2" style="color:var(--peach);font-size:12px">—</div>
+          <div class="metric-unit">Hz</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="spec-area">
+      <div class="cb-container">
+        <div class="cb-handle" id="cb-handle"></div>
+        <div class="cb-body">
+          <canvas id="cb-canvas" height="40"></canvas>
+          <div class="cb-labels" id="cb-labels"></div>
+        </div>
+      </div>
+      <div class="spec-panel" id="spec-panel-1">
+        <canvas class="spec-canvas" id="spec-canvas-1"></canvas>
+        <div class="spec-overlay-label">
+          <span class="dot" style="background:var(--blue)"></span>
+          <span id="spec-name-1">Ch 1</span>
+        </div>
+        <div class="spec-placeholder" id="spec-ph-1">
+          <span>〜</span>Awaiting audio stream…
+        </div>
+      </div>
+      <div class="spec-panel" id="spec-panel-2">
+        <canvas class="spec-canvas" id="spec-canvas-2"></canvas>
+        <div class="spec-overlay-label">
+          <span class="dot" style="background:var(--teal)"></span>
+          <span id="spec-name-2">Ch 2</span>
+        </div>
+        <div class="spec-placeholder" id="spec-ph-2">
+          <span>〜</span>Awaiting audio stream…
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   APP STATE
+════════════════════════════════════════════════════════════ */
+const APP = {
+  audioCtx: null, stream: null, analyser1: null, analyser2: null,
+  nativeProc: null,
+  labels: { ch1: 'Lung L', ch2: 'Larynx' },
+  settings: { fftSize: 8192, window: 'hann', maxFreq: 2000, scale: 'log', timeRange: 30 },
+  clipCount: [0, 0], sampleCount: 0,
+  timerInterval: null, startTime: null, rafId: null, isMono: false,
+  fileMode: false, fileSource: null, fileBuffer: null,
+  fileDuration: 0, fileName: '', filePlayStartCtxTime: 0, filePauseOffset: 0
+};
+
+/* ════════════════════════════════════════════════════════════
+   NATIVE AUDIO BRIDGE (AudioRecord → WebView)
+════════════════════════════════════════════════════════════ */
+const RING_SIZE = 1 << 17;   // 131072 — must be power of 2
+const ringBuf   = new Float32Array(RING_SIZE);
+let   ringWrite = 0;
+let   ringRead  = 0;
+
+/**
+ * Called by Kotlin MainActivity via evaluateJavascript()
+ * b64 = Base64-encoded little-endian Float32 array (interleaved L,R,L,R,…)
+ * count = number of Float32 samples in the buffer
+ */
+window.onNativeAudio = function(b64, count) {
+  try {
+    const bin   = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const f32 = new Float32Array(bytes.buffer, 0, count);
+    const mask = RING_SIZE - 1;
+    for (let i = 0; i < count; i++) {
+      ringBuf[ringWrite & mask] = f32[i];
+      ringWrite++;
+    }
+  } catch(e) { console.warn('[onNativeAudio] decode error:', e); }
+};
+
+/** Called by Kotlin after RECORD_AUDIO permission is granted */
+window.onPermissionResult = function(granted) {
+  if (granted) checkUsbDevice();
+};
+
+/* ════════════════════════════════════════════════════════════
+   SETUP SCREEN — USB STATUS
+════════════════════════════════════════════════════════════ */
+function checkUsbDevice() {
+  const dot   = document.getElementById('usb-dot');
+  const label = document.getElementById('usb-name');
+  const btn   = document.getElementById('start-btn');
+
+  // Android JavascriptInterface is synchronous
+  if (typeof Android === 'undefined') {
+    // PC / browser mode — skip USB check
+    dot.style.color   = 'var(--yellow)';
+    label.textContent = 'Browser mode — use File open';
+    btn.disabled = true;
+    return;
+  }
+
+  const name = Android.getUsbDeviceName();
+  if (name === 'none') {
+    dot.style.color   = 'var(--red)';
+    label.textContent = 'No USB audio device detected';
+    btn.disabled = true;
+  } else {
+    dot.style.color   = 'var(--green)';
+    label.textContent = name;
+    btn.disabled = false;
+  }
+}
+
+/* ── Helpers ── */
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  el.textContent = msg; el.classList.add('visible');
+}
+function hideError() {
+  document.getElementById('error-msg').classList.remove('visible');
+}
+function getLabel(ch) {
+  const sel = document.getElementById(`ch${ch}-select`);
+  if (sel.value === 'custom') {
+    const t = document.getElementById(`ch${ch}-custom`).value.trim();
+    return t || `Ch ${ch}`;
+  }
+  return sel.value;
+}
+
+/* ════════════════════════════════════════════════════════════
+   START MONITORING — NATIVE MODE
+════════════════════════════════════════════════════════════ */
+async function startNativeMonitoring() {
+  const btn = document.getElementById('start-btn');
+  btn.classList.add('loading'); btn.disabled = true;
+  hideError();
+
+  APP.labels.ch1 = getLabel(1);
+  APP.labels.ch2 = getLabel(2);
+
+  // Reset ring buffer
+  ringWrite = 0; ringRead = 0;
+
+  // Create AudioContext
+  try { APP.audioCtx = new AudioContext({ sampleRate: 48000 }); }
+  catch(_) { APP.audioCtx = new AudioContext(); }
+  if (APP.audioCtx.state === 'suspended') await APP.audioCtx.resume();
+
+  // Create AnalyserNodes
+  APP.analyser1 = APP.audioCtx.createAnalyser();
+  APP.analyser2 = APP.audioCtx.createAnalyser();
+  applyAnalyserSettings();
+
+  // ScriptProcessorNode as fake stereo source (reads from ring buffer)
+  const proc     = APP.audioCtx.createScriptProcessor(4096, 0, 2);
+  const splitter = APP.audioCtx.createChannelSplitter(2);
+  // Silent gain to keep AudioContext graph alive without audible output
+  const silent   = APP.audioCtx.createGain();
+  silent.gain.value = 0;
+
+  proc.onaudioprocess = function(e) {
+    const L    = e.outputBuffer.getChannelData(0);
+    const R    = e.outputBuffer.getChannelData(1);
+    const mask = RING_SIZE - 1;
+    const avail = ringWrite - ringRead;
+    if (avail >= L.length * 2) {
+      for (let i = 0; i < L.length; i++) {
+        L[i] = ringBuf[(ringRead++) & mask];
+        R[i] = ringBuf[(ringRead++) & mask];
+      }
+    } else {
+      L.fill(0); R.fill(0);   // buffer underrun → silence
+    }
+  };
+
+  proc.connect(splitter);
+  splitter.connect(APP.analyser1, 0);
+  splitter.connect(APP.analyser2, 1);
+  proc.connect(silent);
+  silent.connect(APP.audioCtx.destination);
+
+  APP.nativeProc = proc;
+  APP.isMono     = false;
+  APP.clipCount  = [0, 0];
+  APP.sampleCount = 0;
+  APP.stream     = null;
+  APP.fileMode   = false;
+
+  // Start native AudioRecord
+  Android.startRecording();
+
+  enterMonitorScreen();
+  startTimer();
+  startMetricsLoop();
+}
+
+/* ════════════════════════════════════════════════════════════
+   STOP MONITORING
+════════════════════════════════════════════════════════════ */
+function stopMonitoring() {
+  cancelAnimationFrame(APP.rafId);
+  clearInterval(APP.timerInterval);
+
+  // Stop native recording if active
+  if (typeof Android !== 'undefined' && !APP.fileMode) {
+    try { Android.stopRecording(); } catch(_) {}
+  }
+
+  try { APP.fileSource?.stop(); } catch(_) {}
+  APP.stream?.getTracks().forEach(t => t.stop());
+  APP.audioCtx?.close();
+
+  Object.assign(APP, {
+    audioCtx: null, stream: null, analyser1: null, analyser2: null,
+    nativeProc: null, rafId: null, timerInterval: null,
+    fileMode: false, fileSource: null, fileBuffer: null, fileDuration: 0
+  });
+
+  if (SPEC.ro) { SPEC.ro.disconnect(); SPEC.ro = null; }
+  SPEC.ctx = [null, null]; SPEC.lastTs = null; SPEC.pxAcc = [0, 0];
+
+  ['1','2'].forEach(n => {
+    const ph = document.getElementById(`spec-ph-${n}`);
+    ph.innerHTML = '<span>〜</span>Awaiting audio stream…';
+    ph.style.display = '';
+  });
+
+  document.getElementById('file-playbar').classList.remove('visible');
+  document.getElementById('file-pause-btn').textContent = '⏸ Pause';
+  document.getElementById('file-prog-fill').style.width = '0%';
+  document.getElementById('screen-monitor').classList.remove('active');
+  document.getElementById('screen-setup').classList.add('active');
+  document.getElementById('start-btn').classList.remove('loading');
+  document.getElementById('start-btn').disabled = false;
+  document.getElementById('file-btn').textContent = '📁 Open Audio File';
+  document.getElementById('file-btn').disabled = false;
+  document.getElementById('file-input').value = '';
+  document.getElementById('hdr-timer').textContent = '00:00';
+  document.getElementById('mono-tag')?.remove();
+}
+
+/* ════════════════════════════════════════════════════════════
+   FILE MODE (unchanged from v1)
+════════════════════════════════════════════════════════════ */
+function openFileMode() { document.getElementById('file-input').click(); }
+
+async function loadAudioFile(file) {
+  if (!file) return;
+  const btn = document.getElementById('file-btn');
+  btn.textContent = '⏳ Loading…'; btn.disabled = true;
+  hideError();
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    APP.audioCtx      = new AudioContext({ sampleRate: 48000 });
+    const audioBuffer = await APP.audioCtx.decodeAudioData(arrayBuffer);
+    APP.fileBuffer    = audioBuffer; APP.fileDuration = audioBuffer.duration;
+    APP.fileName      = file.name;  APP.fileMode = true;
+    APP.isMono        = audioBuffer.numberOfChannels < 2;
+    APP.labels.ch1    = APP.isMono ? 'File (Mono)' : getLabel(1);
+    APP.labels.ch2    = APP.isMono ? 'File (Mono)' : getLabel(2);
+    APP.analyser1     = APP.audioCtx.createAnalyser();
+    APP.analyser2     = APP.audioCtx.createAnalyser();
+    applyAnalyserSettings();
+    startFilePlayback();
+    APP.clipCount = [0, 0]; APP.sampleCount = 0; APP.stream = null;
+    enterMonitorScreen(); startTimer(); startMetricsLoop();
+  } catch(err) {
+    showError('File load failed: ' + err.message);
+    btn.textContent = '📁 Open Audio File'; btn.disabled = false;
+  }
+}
+
+function startFilePlayback(offset = 0) {
+  try { APP.fileSource?.stop(); } catch(_) {}
+  const source = APP.audioCtx.createBufferSource();
+  source.buffer = APP.fileBuffer; source.loop = false;
+  APP.fileSource = source;
+  APP.filePlayStartCtxTime = APP.audioCtx.currentTime - offset;
+  APP.filePauseOffset = offset;
+  if (APP.fileBuffer.numberOfChannels >= 2) {
+    const sp = APP.audioCtx.createChannelSplitter(2);
+    source.connect(sp);
+    sp.connect(APP.analyser1, 0); sp.connect(APP.analyser2, 1);
+  } else {
+    source.connect(APP.analyser1); source.connect(APP.analyser2);
+  }
+  source.connect(APP.audioCtx.destination);
+  source.start(0, offset);
+  source.onended = updateFileProgress;
+}
+
+function toggleFilePause() {
+  if (!APP.audioCtx || !APP.fileMode) return;
+  const btn = document.getElementById('file-pause-btn');
+  if (APP.audioCtx.state === 'running') {
+    APP.filePauseOffset = APP.audioCtx.currentTime - APP.filePlayStartCtxTime;
+    APP.audioCtx.suspend(); btn.textContent = '▶ Resume';
+  } else {
+    APP.audioCtx.resume();
+    APP.filePlayStartCtxTime = APP.audioCtx.currentTime - APP.filePauseOffset;
+    btn.textContent = '⏸ Pause';
+  }
+}
+
+function updateFileProgress() {
+  if (!APP.fileMode || !APP.audioCtx || !APP.fileDuration) return;
+  const elapsed = Math.min(APP.fileDuration,
+    APP.audioCtx.currentTime - (APP.filePlayStartCtxTime || 0));
+  const pct = Math.min(100, (elapsed / APP.fileDuration) * 100);
+  document.getElementById('file-prog-fill').style.width = pct + '%';
+  const fmt = s => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+  document.getElementById('file-time').textContent =
+    `${fmt(Math.floor(elapsed))} / ${fmt(Math.floor(APP.fileDuration))}`;
+}
+
+/* ════════════════════════════════════════════════════════════
+   ENTER MONITOR SCREEN
+════════════════════════════════════════════════════════════ */
+function enterMonitorScreen() {
+  document.getElementById('screen-setup').classList.remove('active');
+  document.getElementById('screen-monitor').classList.add('active');
+  document.getElementById('hdr-ch1-name').textContent      = APP.labels.ch1;
+  document.getElementById('hdr-ch2-name').textContent      = APP.labels.ch2;
+  document.getElementById('spec-name-1').textContent       = APP.labels.ch1;
+  document.getElementById('spec-name-2').textContent       = APP.labels.ch2;
+  document.getElementById('sidebar-ch1-label').textContent = APP.labels.ch1.slice(0,5).toUpperCase();
+  document.getElementById('sidebar-ch2-label').textContent = APP.labels.ch2.slice(0,5).toUpperCase();
+  ['1','2'].forEach(n => { document.getElementById(`spec-ph-${n}`).style.display = 'none'; });
+  initSpectrogram();
+  if (APP.fileMode) {
+    document.getElementById('file-playbar').classList.add('visible');
+    document.getElementById('file-fname').textContent = APP.fileName || '—';
+    updateFileProgress();
+  }
+  if (APP.isMono) {
+    const tag = document.createElement('span');
+    tag.id = 'mono-tag'; tag.textContent = 'MONO';
+    tag.style.cssText = 'font-size:10px;font-family:JetBrains Mono,monospace;font-weight:700;' +
+      'background:rgba(249,226,175,0.15);color:var(--yellow);' +
+      'border:1px solid rgba(249,226,175,0.3);border-radius:4px;padding:2px 7px;';
+    document.getElementById('hdr-timer').insertAdjacentElement('beforebegin', tag);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   TIMER
+════════════════════════════════════════════════════════════ */
+function startTimer() {
+  APP.startTime = Date.now();
+  APP.timerInterval = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - APP.startTime) / 1000);
+    const m = Math.floor(elapsed / 60).toString().padStart(2,'0');
+    const s = (elapsed % 60).toString().padStart(2,'0');
+    document.getElementById('hdr-timer').textContent = `${m}:${s}`;
+    if (APP.fileMode) updateFileProgress();
+  }, 500);
+}
+
+/* ════════════════════════════════════════════════════════════
+   METRICS LOOP
+════════════════════════════════════════════════════════════ */
+function applyAnalyserSettings() {
+  [APP.analyser1, APP.analyser2].forEach(a => {
+    if (!a) return;
+    a.fftSize = APP.settings.fftSize;
+    a.smoothingTimeConstant = 0.85;
+    a.minDecibels = -120; a.maxDecibels = -10;
+  });
+}
+
+function startMetricsLoop() {
+  const bufSize = APP.analyser1.fftSize;
+  const tBuf1 = new Float32Array(bufSize), tBuf2 = new Float32Array(bufSize);
+  let fBuf1 = new Float32Array(APP.analyser1.frequencyBinCount);
+  let fBuf2 = new Float32Array(APP.analyser2.frequencyBinCount);
+
+  function loop(ts) {
+    APP.rafId = requestAnimationFrame(loop);
+    if (!APP.analyser1) return;
+    if (fBuf1.length !== APP.analyser1.frequencyBinCount) {
+      fBuf1 = new Float32Array(APP.analyser1.frequencyBinCount);
+      fBuf2 = new Float32Array(APP.analyser2.frequencyBinCount);
+    }
+    APP.analyser1.getFloatTimeDomainData(tBuf1);
+    APP.analyser2.getFloatTimeDomainData(tBuf2);
+    APP.analyser1.getFloatFrequencyData(fBuf1);
+    APP.analyser2.getFloatFrequencyData(fBuf2);
+
+    const rms1 = calcRMS(tBuf1), rms2 = calcRMS(tBuf2);
+    const db1  = rms1 > 1e-9 ? 20 * Math.log10(rms1) : -120;
+    const db2  = rms2 > 1e-9 ? 20 * Math.log10(rms2) : -120;
+    APP.sampleCount += bufSize;
+    APP.clipCount[0] += countClip(tBuf1);
+    APP.clipCount[1] += countClip(tBuf2);
+    const clipPct1 = (APP.clipCount[0] / APP.sampleCount * 100).toFixed(2);
+    const clipPct2 = (APP.clipCount[1] / APP.sampleCount * 100).toFixed(2);
+    const sr  = APP.audioCtx.sampleRate;
+    const sc1 = calcSpectralCentroid(fBuf1, sr, 50, APP.settings.maxFreq);
+    const sc2 = calcSpectralCentroid(fBuf2, sr, 50, APP.settings.maxFreq);
+    renderMetrics(1, db1, clipPct1, sc1);
+    renderMetrics(2, db2, clipPct2, sc2);
+    renderQC(parseFloat(clipPct1), parseFloat(clipPct2), db1, db2);
+    drawSpectrogramFrame(ts, fBuf1, fBuf2);
+  }
+  loop(performance.now());
+}
+
+function calcRMS(buf) {
+  let s = 0;
+  for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+  return Math.sqrt(s / buf.length);
+}
+function countClip(buf) {
+  let n = 0;
+  for (let i = 0; i < buf.length; i++) if (Math.abs(buf[i]) >= 0.99) n++;
+  return n;
+}
+function calcSpectralCentroid(fBuf, sr, fLo, fHi) {
+  const binHz = sr / (fBuf.length * 2);
+  const lo = Math.max(0, Math.floor(fLo / binHz));
+  const hi = Math.min(fBuf.length - 1, Math.ceil(fHi / binHz));
+  let ws = 0, ms = 0;
+  for (let i = lo; i <= hi; i++) {
+    const mag = Math.pow(10, fBuf[i] / 20);
+    ws += i * binHz * mag; ms += mag;
+  }
+  return ms > 0 ? Math.round(ws / ms) : 0;
+}
+
+function renderMetrics(ch, db, clipPct, sc) {
+  document.getElementById(`val-rms${ch}`).textContent  = db > -119 ? db.toFixed(1) : '—';
+  document.getElementById(`val-clip${ch}`).textContent = clipPct;
+  document.getElementById(`val-sc${ch}`).textContent   = sc > 0 ? sc : '—';
+  const pct = Math.max(0, Math.min(100, (db + 60) / 60 * 100));
+  document.getElementById(`vu${ch}`).style.height = pct + '%';
+  const c = parseFloat(clipPct);
+  document.getElementById(`val-clip${ch}`).style.color =
+    c > 1 ? 'var(--red)' : c > 0.1 ? 'var(--yellow)' : 'var(--green)';
+}
+function renderQC(c1, c2, db1, db2) {
+  const badge = document.getElementById('qc-badge');
+  if (c1 > 1 || c2 > 1) {
+    badge.className = 'qc-badge qc-err';  badge.textContent = '● CLIP';
+  } else if (db1 < -50 && db2 < -50) {
+    badge.className = 'qc-badge qc-warn'; badge.textContent = '● LOW';
+  } else {
+    badge.className = 'qc-badge qc-ok';   badge.textContent = '● OK';
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   SPECTROGRAM
+════════════════════════════════════════════════════════════ */
+const SPEC = { ctx: [null, null], lastTs: null, pxAcc: [0, 0], ro: null };
+const CMAP = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 1;
+  const g = c.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, 256, 0);
+  gr.addColorStop(0,    '#11111b'); gr.addColorStop(0.2,  '#313244');
+  gr.addColorStop(0.45, '#89b4fa'); gr.addColorStop(0.65, '#a6e3a1');
+  gr.addColorStop(0.8,  '#f9e2af'); gr.addColorStop(1,    '#f38ba8');
+  g.fillStyle = gr; g.fillRect(0, 0, 256, 1);
+  return g.getImageData(0, 0, 256, 1).data;
+})();
+
+function freqToY(f, maxFreq, h, scale) {
+  if (scale === 'log') {
+    const logMin = Math.log10(50), logMax = Math.log10(maxFreq);
+    return h - Math.round((Math.log10(Math.max(f, 50)) - logMin) / (logMax - logMin) * h);
+  }
+  return h - Math.round(f / maxFreq * h);
+}
+
+function initSpectrogram() {
+  if (SPEC.ro) { SPEC.ro.disconnect(); SPEC.ro = null; }
+  for (let i = 0; i < 2; i++) {
+    const cv = document.getElementById(`spec-canvas-${i + 1}`);
+    const p  = document.getElementById(`spec-panel-${i + 1}`);
+    cv.width  = p.clientWidth  || 600;
+    cv.height = p.clientHeight || 200;
+    SPEC.ctx[i] = cv.getContext('2d');
+    SPEC.ctx[i].fillStyle = '#11111b';
+    SPEC.ctx[i].fillRect(0, 0, cv.width, cv.height);
+  }
+  SPEC.lastTs = null; SPEC.pxAcc = [0, 0];
+  SPEC.ro = new ResizeObserver(() => initSpectrogram());
+  document.querySelectorAll('.spec-panel').forEach(el => SPEC.ro.observe(el));
+}
+
+function drawSpectrogramFrame(ts, fBuf1, fBuf2) {
+  if (!SPEC.ctx[0]) return;
+  const W = SPEC.ctx[0].canvas.width, H = SPEC.ctx[0].canvas.height;
+  const dt = SPEC.lastTs ? (ts - SPEC.lastTs) / 1000 : 0;
+  SPEC.lastTs = ts;
+  const pxPerSec = W / APP.settings.timeRange;
+  [0, 1].forEach(i => {
+    SPEC.pxAcc[i] += dt * pxPerSec;
+    if (SPEC.pxAcc[i] < 1) return;
+    const n = Math.floor(SPEC.pxAcc[i]);
+    SPEC.pxAcc[i] -= n;
+    const ctx = SPEC.ctx[i], fBuf = i === 0 ? fBuf1 : fBuf2;
+    const sr  = APP.audioCtx.sampleRate;
+    const binHz = sr / (fBuf.length * 2);
+    const col = ctx.createImageData(n, H);
+    const col32 = new Uint32Array(col.data.buffer);
+    const maxFreq = APP.settings.maxFreq;
+    const scale   = APP.settings.scale;
+    for (let y = 0; y < H; y++) {
+      const freq = scale === 'log'
+        ? Math.pow(10, Math.log10(50) + (H - 1 - y) / (H - 1) * (Math.log10(maxFreq) - Math.log10(50)))
+        : (H - 1 - y) / (H - 1) * maxFreq;
+      const bin = Math.min(fBuf.length - 1, Math.round(freq / binHz));
+      const dB  = Math.max(-120, Math.min(-10, fBuf[bin]));
+      const idx = Math.round(((dB + 120) / 110) * 255) * 4;
+      const r = CMAP[idx], g = CMAP[idx+1], b = CMAP[idx+2];
+      const pix = (255 << 24) | (b << 16) | (g << 8) | r;
+      for (let x = 0; x < n; x++) col32[y * n + x] = pix;
+    }
+    ctx.drawImage(ctx.canvas, n, 0, W - n, H, 0, 0, W - n, H);
+    ctx.putImageData(col, W - n, 0);
+  });
+}
+
+/* ════════════════════════════════════════════════════════════
+   COLORBAR
+════════════════════════════════════════════════════════════ */
+function drawColorbar() {
+  const cv = document.getElementById('cb-canvas');
+  const p  = document.getElementById('spec-panel-1');
+  cv.width  = (p.clientWidth || 600) - 30; cv.height = 40;
+  const ctx = cv.getContext('2d');
+  const gr = ctx.createLinearGradient(0, 0, cv.width, 0);
+  gr.addColorStop(0,    '#11111b'); gr.addColorStop(0.2,  '#313244');
+  gr.addColorStop(0.45, '#89b4fa'); gr.addColorStop(0.65, '#a6e3a1');
+  gr.addColorStop(0.8,  '#f9e2af'); gr.addColorStop(1,    '#f38ba8');
+  ctx.fillStyle = gr; ctx.fillRect(0, 10, cv.width, 20);
+  ctx.font = '9px JetBrains Mono, monospace';
+  ctx.fillStyle = '#a6adc8';
+  ['-120', '-100', '-80', '-60', '-40', '-20', '-10'].forEach((v, i) => {
+    const x = (parseInt(v) + 120) / 110 * cv.width;
+    ctx.fillText(v, Math.max(0, Math.min(cv.width - 20, x - 6)), 8);
+  });
+  const lblEl = document.getElementById('cb-labels');
+  lblEl.innerHTML = '<span>dBFS</span>';
+}
+
+/* ════════════════════════════════════════════════════════════
+   ADVANCED SETTINGS
+════════════════════════════════════════════════════════════ */
+document.getElementById('adv-btn').addEventListener('click', () => {
+  document.getElementById('adv-panel').classList.toggle('open');
+});
+document.addEventListener('click', e => {
+  if (!e.target.closest('.adv-btn') && !e.target.closest('.adv-panel'))
+    document.getElementById('adv-panel').classList.remove('open');
+});
+['adv-fft','adv-maxfreq','adv-scale','adv-time'].forEach(id => {
+  document.getElementById(id).addEventListener('change', function() {
+    if (id === 'adv-fft')     APP.settings.fftSize   = parseInt(this.value);
+    if (id === 'adv-maxfreq') APP.settings.maxFreq   = parseInt(this.value);
+    if (id === 'adv-scale')   APP.settings.scale     = this.value;
+    if (id === 'adv-time')    APP.settings.timeRange = parseInt(this.value);
+    if (APP.analyser1) applyAnalyserSettings();
+    drawColorbar();
+  });
+});
+
+/* ════════════════════════════════════════════════════════════
+   CUSTOM LABEL TOGGLE
+════════════════════════════════════════════════════════════ */
+[1, 2].forEach(ch => {
+  document.getElementById(`ch${ch}-select`).addEventListener('change', function() {
+    document.getElementById(`ch${ch}-custom`)
+      .classList.toggle('visible', this.value === 'custom');
+  });
+});
+
+/* ════════════════════════════════════════════════════════════
+   EVENT BINDINGS
+════════════════════════════════════════════════════════════ */
+document.getElementById('start-btn').addEventListener('click', startNativeMonitoring);
+document.getElementById('usb-refresh').addEventListener('click', checkUsbDevice);
+document.getElementById('file-btn').addEventListener('click', openFileMode);
+document.getElementById('file-input').addEventListener('change', e => {
+  const f = e.target.files[0]; if (f) loadAudioFile(f);
+});
+document.getElementById('file-pause-btn').addEventListener('click', toggleFilePause);
+document.getElementById('stop-btn').addEventListener('click', stopMonitoring);
+
+/* ════════════════════════════════════════════════════════════
+   BOOTSTRAP
+════════════════════════════════════════════════════════════ */
+drawColorbar();
+checkUsbDevice();
+</script>
+</body>
+</html>
