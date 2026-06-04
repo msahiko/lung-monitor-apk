@@ -988,6 +988,19 @@ window.onNativeAudio = function(b64, count) {
   } catch(e) { console.warn('[onNativeAudio]', e); }
 };
 
+/* ── Debug: 画面下部にデバイス情報を表示 ────────────────────── */
+window.addEventListener('load', function() {
+  var p = document.getElementById('dbg-panel');
+  var t = document.getElementById('dbg-txt');
+  if (!p || typeof Android === 'undefined') return;
+  p.style.display = 'block';
+  t.textContent = 'Detected: ' + Android.getUsbDeviceName();
+  /* 5秒ごとに更新 */
+  setInterval(function() {
+    t.textContent = 'Detected: ' + Android.getUsbDeviceName();
+  }, 5000);
+});
+
 /* ── Start monitoring ────────────────────────────────────────── */
 async function startMonitoring() {
   const btn = document.getElementById('start-btn');
@@ -2066,6 +2079,15 @@ loadDevices().then(() => {
 });
 navigator.mediaDevices?.addEventListener('devicechange', loadDevices);
 </script>
+
+<!-- デバッグパネル（APKモード時のみ表示） -->
+<div id="dbg-panel" style="
+  display:none; position:fixed; bottom:0; left:0; right:0;
+  background:rgba(17,17,27,0.92); color:#a6e3a1;
+  font-family:'JetBrains Mono',monospace; font-size:12px;
+  padding:6px 14px; z-index:9999; border-top:1px solid #313244;">
+  🔍 <span id="dbg-txt">—</span>
+</div>
+
 </body>
 </html>
-
