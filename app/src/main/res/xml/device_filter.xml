@@ -1,0 +1,4 @@
+<resources>
+<!--  Match any USB device (H1 XLR, etc.)  -->
+<usb-device/>
+</resources>
