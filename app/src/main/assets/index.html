@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1055,6 +1054,23 @@ window.onNativeAudio = function(b64, count, total) {
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     const f32   = new Float32Array(bytes.buffer, 0, count);
 
+    /* ── 直接RMS計算（モンキーパッチを介さず直接DOM更新）─────── */
+    const frames = count >> 1;
+    let sq1 = 0, sq2 = 0;
+    for (let i = 0; i < frames; i++) {
+      sq1 += f32[i * 2]     * f32[i * 2];
+      sq2 += f32[i * 2 + 1] * f32[i * 2 + 1];
+    }
+    const rms1 = Math.sqrt(sq1 / frames);
+    const rms2 = Math.sqrt(sq2 / frames);
+    const db1  = rms1 > 1e-9 ? 20 * Math.log10(rms1) : -120;
+    const db2  = rms2 > 1e-9 ? 20 * Math.log10(rms2) : -120;
+    if (NATIVE.active && typeof renderMetrics === 'function') {
+      renderMetrics(1, db1, '0.00', 0);
+      renderMetrics(2, db2, '0.00', 0);
+      renderQC(0, 0, db1, db2);
+    }
+
     if (NATIVE.active) {
       const frames = count >> 1;
       const fftSize = APP.settings.fftSize;
@@ -1083,7 +1099,7 @@ window.onNativeAudio = function(b64, count, total) {
 
     /* デバッグ表示 */
     const t = document.getElementById('dbg-txt');
-    if (t) t.textContent = 'USB: H1 XLR ✅ | Samples: ' + total;
+    if (t) t.textContent = 'H1 XLR ✅ | dB1:' + db1.toFixed(1) + '  dB2:' + db2.toFixed(1) + '  N:' + total;
 
   } catch(e) { console.warn('[onNativeAudio]', e); }
 };
@@ -1423,9 +1439,10 @@ function stopMonitoring() {
   try { APP.fileSource?.stop(); } catch(_) {}
   APP.stream?.getTracks().forEach(t => t.stop());
   /* Stop native AudioRecord if active */
-  if (typeof Android !== 'undefined' && APP.nativeProc) {
+  if (typeof Android !== 'undefined') {
     try { Android.stopRecording(); } catch(_) {}
   }
+  NATIVE.active = false;
   APP.audioCtx?.close();
   Object.assign(APP, {
     audioCtx: null, stream: null,
